@@ -1,0 +1,203 @@
+<html>
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Display a map</title>
+        <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css"/>
+        <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+        <script src="https://unpkg.com/protomaps-leaflet@5.0.0/dist/protomaps-leaflet.js"></script>
+        <!-- <script src="../dist/protomaps-leaflet.js"></script> -->
+        <style>
+            /* body, #map {
+                height:100vh;
+                margin:0px;
+            } */
+            #map {
+            /* Decide how wide the map should be */
+            width: 1000px;
+            /* For some reason 100vh (height of entire viewport) gave me a scrollbar */
+            height: 95vh;
+            /* Set lighter background for areas without features. Overrides
+            leaflet's internal CSS */
+            background: #fffbf6;
+        }
+            #debug {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 1000;
+            background: white;
+            padding: 10px;
+            border: 1px solid #ccc;
+            max-width: 300px;
+            max-height: 200px;
+            overflow: auto;
+        }
+        .layer-control {
+            position: absolute;
+            top: 80px;
+            right: 10px;
+            z-index: 1000;
+            background: white;
+            padding: 10px;
+            border: 1px solid #ccc;
+        }
+        </style>
+    </head>
+    <body>
+        <div id="map"></div> 
+        <script>
+            const map = L.map('map')
+
+            map.setView([20, 0], 2); // Center on the world
+
+            const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+            maxZoom: 19
+            });
+
+            osmLayer.addTo(map);
+
+            // Define baseLayers object before using it
+            const baseLayers = {
+            // "Protomaps": layer,
+            "OpenStreetMap": osmLayer
+            };
+            // can swap out for this 
+            // fetch('earthquakes.geojson')
+            // .then(response => response.json())
+            // .then(data => {
+            // Add this after your existing baseLayers definition
+            const tectonicPlatesLayer = L.tileLayer('https://earthquake.usgs.gov/basemap/tiles/plates/{z}/{x}/{y}.png', {
+                attribution: 'Tectonic Plates &copy; <a href="https://earthquake.usgs.gov/">USGS</a>',
+                maxZoom: 10,
+                opacity: 0.7
+            });    
+
+            function getEarthquakeColor(magnitude) {
+                // Color scale from green (low) to red (high)
+                if (magnitude < 4.5) return '#1a9850'; // Green
+                if (magnitude < 5.0) return '#91cf60'; // Light green
+                if (magnitude < 5.5) return '#d9ef8b'; // Yellow-green
+                if (magnitude < 6.0) return '#fee08b'; // Light orange
+                if (magnitude < 6.5) return '#fc8d59'; // Orange
+                if (magnitude < 7.0) return '#e34a33'; // Red-orange
+                return '#b30000';                      // Deep red
+                }
+
+            // Helper function to darken a color (add before your fetch call)
+            function darkenColor(color, percent) {
+                // Simple color darkening function
+                const num = parseInt(color.replace('#', ''), 16);
+                const amt = Math.round(2.55 * percent);
+                const R = Math.max(0, (num >> 16) - amt);
+                const G = Math.max(0, (num >> 8 & 0x00FF) - amt);
+                const B = Math.max(0, (num & 0x0000FF) - amt);
+                return '#' + (0x1000000 + (R << 16) + (G << 8) + B).toString(16).slice(1);
+            }
+
+            fetch('https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&starttime=2023-01-01&endtime=2023-01-31&minmagnitude=4.5')
+            .then(response => response.json())
+            .then(data => {
+                console.log('Earthquake data loaded:', data.features.length, 'earthquakes');
+                earthquakeLayer = L.geoJSON(data, {
+                pointToLayer: (feature, latlng) => {
+                const magnitude = feature.properties.mag;
+                let radius = Math.exp(magnitude) / 2;
+                
+                const currentZoom = map.getZoom();
+                const maxRadius = 15;
+                
+                if (currentZoom < 3) {
+                    radius = Math.min(radius * 0.5, maxRadius);
+                } else if (currentZoom < 5) {
+                    radius = Math.min(radius * 0.7, maxRadius);
+                } else {
+                    radius = Math.min(radius, maxRadius);
+                }
+
+                const fillColor = getEarthquakeColor(magnitude);
+                const borderColor = darkenColor(fillColor, 20); // Slightly darker border
+    
+                return L.circleMarker(latlng, {
+                    radius: radius,
+                    fillColor: fillColor,
+                    color: borderColor,
+                    weight: 1,
+                    opacity: 1,
+                    fillOpacity: 0.5
+                });
+            },
+                onEachFeature: (feature, layer) => {
+                    layer.bindPopup(`
+                    <strong>Magnitude:</strong> ${feature.properties.mag}<br>
+                    <strong>Location:</strong> ${feature.properties.place}<br>
+                    <strong>Time:</strong> ${new Date(feature.properties.time).toLocaleString()}<br>
+                    <a href="${feature.properties.url}" target="_blank">More info</a>
+                    `);
+                }
+                }).addTo(map);
+
+                const overlays = {
+                "Earthquakes": earthquakeLayer,
+                "Tectonic Plates": tectonicPlatesLayer
+                };
+
+                L.control.layers(baseLayers, overlays).addTo(map);
+                addEarthquakeLegend();
+            })
+
+            function addEarthquakeLegend() {
+                const legend = L.control({ position: 'bottomright' });
+                
+                legend.onAdd = function() {
+                    const div = L.DomUtil.create('div', 'info legend');
+                    const magnitudes = [4.5, 5.0, 5.5, 6.0, 6.5, 7.0];
+                    const labels = [];
+                    
+                    div.innerHTML = '<h4>Earthquake Magnitude</h4>';
+                    
+                    for (let i = 0; i < magnitudes.length; i++) {
+                        const from = magnitudes[i];
+                        const to = magnitudes[i + 1];
+                        
+                        labels.push(
+                            '<i style="background:' + getEarthquakeColor(from + 0.1) + '"></i> ' +
+                            from + (to ? '&ndash;' + to : '+'));
+                    }
+                    
+                    div.innerHTML += '<div class="legend-items">' + labels.join('<br>') + '</div>';
+                    return div;
+                };
+                
+                return legend.addTo(map);
+            }
+
+            const style = document.createElement('style');
+            style.textContent = `
+                .info.legend {
+                    background: white;
+                    padding: 10px;
+                    border-radius: 5px;
+                    box-shadow: 0 0 15px rgba(0,0,0,0.2);
+                }
+                .info.legend h4 {
+                    margin: 0 0 5px;
+                    font-size: 14px;
+                }
+                .legend-items {
+                    font-size: 12px;
+                    line-height: 18px;
+                }
+                .info.legend i {
+                    width: 18px;
+                    height: 18px;
+                    float: left;
+                    margin-right: 8px;
+                    opacity: 0.7;
+                }
+            `;
+            document.head.appendChild(style);
+        </script>
+    </body>
+</html>
